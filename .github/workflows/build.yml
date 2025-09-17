@@ -47,40 +47,38 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo build --release --target x86_64-unknown-linux-musl
 
-      - name: Archive artifacts (Linux)
+      - name: Collect artifacts (Linux)
         if: runner.os == 'Linux'
         run: |
           mkdir -p dist
           cp target/release/dedup-rs dist/dedup-rs-linux
-          zip -j dist/dedup-rs-linux.zip dist/dedup-rs-linux
           cp target/x86_64-unknown-linux-musl/release/dedup-rs dist/dedup-rs-linux-musl-static
-          zip -j dist/dedup-rs-linux-musl-static.zip dist/dedup-rs-linux-musl-static
 
-      - name: Archive artifacts (macOS)
+      - name: Collect artifacts (macOS)
         if: runner.os == 'macOS'
         run: |
           mkdir -p dist
           cp target/release/dedup-rs dist/dedup-rs-macos
-          zip -j dist/dedup-rs-macos.zip dist/dedup-rs-macos
 
-      - name: Archive artifacts (Windows)
+      - name: Collect artifacts (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item target/release/dedup-rs.exe dist/dedup-rs-windows.exe
-          Compress-Archive -Path dist/dedup-rs-windows.exe -DestinationPath dist/dedup-rs-windows.zip -Force
           # Build static CRT version
           $env:RUSTFLAGS='-C target-feature=+crt-static'
           cargo build --release
           Copy-Item target/release/dedup-rs.exe dist/dedup-rs-windows-static.exe -Force
-          Compress-Archive -Path dist/dedup-rs-windows-static.exe -DestinationPath dist/dedup-rs-windows-static.zip -Force
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dedup-rs-${{ runner.os }}
-          path: dist/*.zip
+          path: |
+            dist/dedup-rs-linux*
+            dist/dedup-rs-macos*
+            dist/dedup-rs-windows*.exe
           if-no-files-found: error
 
   release:
@@ -103,6 +101,9 @@ jobs:
         with:
           draft: false
           prerelease: false
-          files: ./artifacts/*.zip
+          files: |
+            ./artifacts/dedup-rs-linux*
+            ./artifacts/dedup-rs-macos*
+            ./artifacts/dedup-rs-windows*.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

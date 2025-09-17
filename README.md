@@ -99,12 +99,12 @@ cargo run --release -- "C:\\path\\to\\scan"
 
 ## 静态链接版本
 
-发布工作流会额外生成：
+发布工作流会额外生成（直接提供可执行文件）：
 
-- Linux（musl 静态）：`dedup-rs-linux-musl-static.zip`
-- Windows（静态 CRT）：`dedup-rs-windows-static.zip`
+- Linux（musl 静态）：`dedup-rs-linux-musl-static`
+- Windows（静态 CRT）：`dedup-rs-windows-static.exe`
 
-获取方式：在打 tag（形如 `v0.1.0`）后，前往 GitHub Releases 页面下载对应平台压缩包，解压后即可直接运行。
+获取方式：在打 tag（形如 `v0.1.0`）后，前往 GitHub Releases 页面下载对应平台可执行文件，赋予执行权限（Linux/macOS）后即可运行。
 
 说明：
 
