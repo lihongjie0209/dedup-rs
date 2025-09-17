@@ -33,6 +33,10 @@ const PARTIAL_HASH_SIZE: usize = 4096; // 4KB from head and 4KB from tail when p
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
+    // 可选：提高 Rayon 线程栈大小，避免极端情况下的栈溢出（若已初始化则忽略错误）
+    let _ = rayon::ThreadPoolBuilder::new()
+        .stack_size(4 * 1024 * 1024)
+        .build_global();
     let scan_path = Path::new(&args.directory);
     let start_time = Instant::now();
 
@@ -254,7 +258,7 @@ fn calculate_partial_hash(path: &Path) -> io::Result<String> {
 
     // Read head up to PARTIAL_HASH_SIZE
     let mut head_buf = vec![0u8; PARTIAL_HASH_SIZE];
-    let mut head_read = 0usize;
+    let head_read: usize;
     {
         let mut reader = BufReader::new(&file);
         head_read = reader.read(&mut head_buf)?;
@@ -284,7 +288,8 @@ fn calculate_full_hash(path: &Path) -> io::Result<String> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
     let mut hasher = blake3::Hasher::new();
-    let mut buffer = [0; 65536]; // 64KB buffer
+    // 使用堆上缓冲区，避免在并行环境下占用过多线程栈空间导致 stack overflow
+    let mut buffer = vec![0u8; 65536]; // 64KB buffer
 
     loop {
         let bytes_read = reader.read(&mut buffer)?;
