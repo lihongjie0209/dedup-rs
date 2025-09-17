@@ -41,12 +41,14 @@ jobs:
         run: |
           mkdir -p dist
           cp target/release/dedup-rs dist/dedup-rs-linux
+          zip -j dist/dedup-rs-linux.zip dist/dedup-rs-linux
 
       - name: Archive artifacts (macOS)
         if: runner.os == 'macOS'
         run: |
           mkdir -p dist
           cp target/release/dedup-rs dist/dedup-rs-macos
+          zip -j dist/dedup-rs-macos.zip dist/dedup-rs-macos
 
       - name: Archive artifacts (Windows)
         if: runner.os == 'Windows'
@@ -54,10 +56,35 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item target/release/dedup-rs.exe dist/dedup-rs-windows.exe
+          Compress-Archive -Path dist/dedup-rs-windows.exe -DestinationPath dist/dedup-rs-windows.zip -Force
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dedup-rs-${{ runner.os }}
-          path: dist/*
+          path: dist/*.zip
           if-no-files-found: error
+
+  release:
+    name: Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dedup-rs-*
+          merge-multiple: true
+          path: ./artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: false
+          files: ./artifacts/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
