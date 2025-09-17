@@ -40,20 +40,20 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           mkdir -p dist
-          cp target/release/dedup-rs dist/dedup-rs-linux-x86_64
+          cp target/release/dedup-rs dist/dedup-rs-linux
 
       - name: Archive artifacts (macOS)
         if: runner.os == 'macOS'
         run: |
           mkdir -p dist
-          cp target/release/dedup-rs dist/dedup-rs-macos-x86_64
+          cp target/release/dedup-rs dist/dedup-rs-macos
 
       - name: Archive artifacts (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target/release/dedup-rs.exe dist/dedup-rs-windows-x86_64.exe
+          Copy-Item target/release/dedup-rs.exe dist/dedup-rs-windows.exe
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
