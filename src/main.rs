@@ -8,6 +8,7 @@ use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use serde::Serialize;
+use sysinfo::{Disks, DiskKind};
 
 // 定义命令行参数
 #[derive(Parser, Debug)]
@@ -36,11 +37,13 @@ const PARTIAL_HASH_SIZE: usize = 4096; // 4KB from head and 4KB from tail when p
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
-    // 根据命令行设置并行线程数，并增加线程栈大小（避免极端情况下的栈溢出）
+    // 计算默认并行度（若未显式指定 threads）：基于磁盘类型与 CPU
+    let auto_threads = args.threads.or_else(|| auto_parallelism(&args.directory));
+    // 初始化 Rayon 线程池（并统一增大栈）
     {
         let mut builder = rayon::ThreadPoolBuilder::new().stack_size(4 * 1024 * 1024);
-        if let Some(n) = args.threads { builder = builder.num_threads(n); }
-        let _ = builder.build_global(); // 若已初始化则忽略
+        if let Some(n) = auto_threads { builder = builder.num_threads(n); }
+        let _ = builder.build_global();
     }
     let scan_path = Path::new(&args.directory);
     let start_time = Instant::now();
@@ -140,6 +143,50 @@ fn main() -> io::Result<()> {
 }
 
 fn dur_secs(d: Duration) -> f64 { d.as_secs_f64() }
+
+/// 基于磁盘类型与 CPU 数自动决定并行度
+/// 规则：
+/// - 若扫描路径所在盘为 SSD/NVMe：使用逻辑核心数（上限 32，避免过高）
+/// - 若为 HDD（旋转盘）：使用逻辑核心数的一半（至少 2，至多 8）
+/// - 若无法识别磁盘类型：使用逻辑核心数但上限 16
+fn auto_parallelism(scan_dir: &str) -> Option<usize> {
+    let cpu = num_cpus::get();
+    let cpu = cpu.max(1);
+
+    // 通过盘符前缀匹配 Windows 情况（例如 C:\ 或 D:\），其它平台退化为根匹配
+    let scan_path = std::path::Path::new(scan_dir);
+
+    // 从 sysinfo 获取磁盘列表并尝试定位对应盘
+    let disks = Disks::new_with_refreshed_list();
+
+    // 查找与扫描路径匹配的磁盘（最前缀匹配）
+    let mut disk_kind: Option<DiskKind> = None;
+    for d in disks.list() {
+        let mount_point = d.mount_point();
+        // 简化匹配逻辑：判断扫描路径是否以该挂载点为前缀
+        if scan_path.starts_with(mount_point) || mount_point.starts_with(scan_path) {
+            disk_kind = Some(d.kind());
+            break;
+        }
+    }
+
+    // 决策线程数
+    let threads = match disk_kind {
+        Some(DiskKind::HDD) => {
+            // 旋转盘：减小并发，至少 2，至多 8
+            (cpu / 2).clamp(2, 8)
+        }
+        Some(DiskKind::SSD) => {
+            // SSD/NVMe：更高并发，但设上限 32 防止过高
+            cpu.clamp(2, 32)
+        }
+        _ => {
+            // 未知：保守上限 16
+            cpu.clamp(2, 16)
+        }
+    };
+    Some(threads)
+}
 
 /// Stage 1: 遍历目录，按文件大小分组
 fn group_by_size(path: &Path) -> HashMap<u64, Vec<PathBuf>> {
