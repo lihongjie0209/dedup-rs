@@ -38,11 +38,27 @@ const PARTIAL_HASH_SIZE: usize = 4096; // 4KB from head and 4KB from tail when p
 fn main() -> io::Result<()> {
     let args = Args::parse();
     // 计算默认并行度（若未显式指定 threads）：基于磁盘类型与 CPU
-    let auto_threads = args.threads.or_else(|| auto_parallelism(&args.directory));
+    let auto_choice = auto_parallelism(&args.directory);
+    let chosen_threads = args.threads.or_else(|| auto_choice.as_ref().map(|c| c.threads));
+    // 打印选择日志
+    match (args.threads, &auto_choice) {
+        (Some(n), _) => {
+            println!("Parallel threads: {} (from --threads)", n);
+        }
+        (None, Some(c)) => {
+            println!(
+                "Parallel threads (auto): {} (cpu={}, disk={}, rule={})",
+                c.threads, c.cpu, c.disk.unwrap_or("unknown"), c.rule
+            );
+        }
+        (None, None) => {
+            println!("Parallel threads: default (Rayon)\n");
+        }
+    }
     // 初始化 Rayon 线程池（并统一增大栈）
     {
         let mut builder = rayon::ThreadPoolBuilder::new().stack_size(4 * 1024 * 1024);
-        if let Some(n) = auto_threads { builder = builder.num_threads(n); }
+        if let Some(n) = chosen_threads { builder = builder.num_threads(n); }
         let _ = builder.build_global();
     }
     let scan_path = Path::new(&args.directory);
@@ -149,7 +165,14 @@ fn dur_secs(d: Duration) -> f64 { d.as_secs_f64() }
 /// - 若扫描路径所在盘为 SSD/NVMe：使用逻辑核心数（上限 32，避免过高）
 /// - 若为 HDD（旋转盘）：使用逻辑核心数的一半（至少 2，至多 8）
 /// - 若无法识别磁盘类型：使用逻辑核心数但上限 16
-fn auto_parallelism(scan_dir: &str) -> Option<usize> {
+struct AutoParallelChoice {
+    threads: usize,
+    cpu: usize,
+    disk: Option<&'static str>,
+    rule: &'static str,
+}
+
+fn auto_parallelism(scan_dir: &str) -> Option<AutoParallelChoice> {
     let cpu = num_cpus::get();
     let cpu = cpu.max(1);
 
@@ -171,21 +194,18 @@ fn auto_parallelism(scan_dir: &str) -> Option<usize> {
     }
 
     // 决策线程数
-    let threads = match disk_kind {
+    let (threads, disk_str, rule) = match disk_kind {
         Some(DiskKind::HDD) => {
-            // 旋转盘：减小并发，至少 2，至多 8
-            (cpu / 2).clamp(2, 8)
+            ((cpu / 2).clamp(2, 8), Some("HDD"), "cpu/2 clamped [2,8]")
         }
         Some(DiskKind::SSD) => {
-            // SSD/NVMe：更高并发，但设上限 32 防止过高
-            cpu.clamp(2, 32)
+            (cpu.clamp(2, 32), Some("SSD"), "cpu clamped [2,32]")
         }
         _ => {
-            // 未知：保守上限 16
-            cpu.clamp(2, 16)
+            (cpu.clamp(2, 16), None, "cpu clamped [2,16] (unknown disk)")
         }
     };
-    Some(threads)
+    Some(AutoParallelChoice { threads, cpu, disk: disk_str, rule })
 }
 
 /// Stage 1: 遍历目录，按文件大小分组
