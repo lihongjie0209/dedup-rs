@@ -36,12 +36,25 @@ jobs:
       - name: Build (release)
         run: cargo build --release
 
+      - name: Install musl and add target (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          rustup target add x86_64-unknown-linux-musl
+
+      - name: Build static (Linux musl)
+        if: runner.os == 'Linux'
+        run: cargo build --release --target x86_64-unknown-linux-musl
+
       - name: Archive artifacts (Linux)
         if: runner.os == 'Linux'
         run: |
           mkdir -p dist
           cp target/release/dedup-rs dist/dedup-rs-linux
           zip -j dist/dedup-rs-linux.zip dist/dedup-rs-linux
+          cp target/x86_64-unknown-linux-musl/release/dedup-rs dist/dedup-rs-linux-musl-static
+          zip -j dist/dedup-rs-linux-musl-static.zip dist/dedup-rs-linux-musl-static
 
       - name: Archive artifacts (macOS)
         if: runner.os == 'macOS'
@@ -57,6 +70,11 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item target/release/dedup-rs.exe dist/dedup-rs-windows.exe
           Compress-Archive -Path dist/dedup-rs-windows.exe -DestinationPath dist/dedup-rs-windows.zip -Force
+          # Build static CRT version
+          $env:RUSTFLAGS='-C target-feature=+crt-static'
+          cargo build --release
+          Copy-Item target/release/dedup-rs.exe dist/dedup-rs-windows-static.exe -Force
+          Compress-Archive -Path dist/dedup-rs-windows-static.exe -DestinationPath dist/dedup-rs-windows-static.zip -Force
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

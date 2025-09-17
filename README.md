@@ -86,6 +86,20 @@ cargo run --release -- "C:\\path\\to\\scan"
 - Windows 路径建议使用双反斜杠或用引号包裹
 - 对非常大的网络盘/远程目录，I/O 延迟可能成为瓶颈
 
+## 静态链接版本
+
+发布工作流会额外生成：
+
+- Linux（musl 静态）：`dedup-rs-linux-musl-static.zip`
+- Windows（静态 CRT）：`dedup-rs-windows-static.zip`
+
+获取方式：在打 tag（形如 `v0.1.0`）后，前往 GitHub Releases 页面下载对应平台压缩包，解压后即可直接运行。
+
+说明：
+
+- Linux 静态版本针对 `x86_64-unknown-linux-musl` 目标构建，适配面更广。
+- Windows 静态 CRT 版本通过 `-C target-feature=+crt-static` 链接静态运行时，便于分发。
+
 ## 许可
 
 本项目采用双许可证：MIT OR Apache-2.0。
