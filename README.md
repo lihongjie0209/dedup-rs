@@ -60,6 +60,37 @@ cargo run --release -- "C:\\path\\to\\scan"
 
 文本/CSV 会打印重复文件分组；JSON 会输出一个对象，包含 `metrics`（指标）与 `groups`（重复文件组）。
 
+### 删除重复文件（可选）
+
+新增删除能力：
+
+```
+--delete                执行删除；若不提供，仅扫描与报告
+--dry-run               试运行，打印将删除的文件但不实际删除
+--keep <strategy>       保留策略（其余删除），可选：created-asc | created-desc | modified-asc | modified-desc
+												默认：modified-desc（保留“最新修改”的那一个）
+```
+
+示例：
+
+```powershell
+# 仅查看将会删除哪些文件（不真的删）
+./target/release/dedup-rs "C:\\path\\to\\scan" --delete --dry-run --keep created-asc
+
+# 实际删除，保留每组“最新修改”的文件
+./target/release/dedup-rs "C:\\path\\to\\scan" --delete --keep modified-desc
+```
+
+说明：
+
+- 策略含义：
+	- created-asc：按“创建时间”从早到晚排序，保留最早创建的那个
+	- created-desc：按“创建时间”从晚到早排序，保留最新创建的那个
+	- modified-asc：按“修改时间”从早到晚排序，保留最早修改的那个
+	- modified-desc：按“修改时间”从晚到早排序，保留最新修改的那个（默认）
+- 跨平台差异：部分文件系统/平台可能不存在“创建时间”，此时会回退使用“修改时间”；若两者都不可用，将按路径字典序回退。
+- 安全建议：先用 `--dry-run` 查看删除清单，确认无误再移除 `--dry-run` 执行真正删除。
+
 ### 指标说明（metrics）
 
 - total_files：扫描到的文件数量

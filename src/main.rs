@@ -27,10 +27,34 @@ struct Args {
     /// 并行线程数（默认：CPU 逻辑核心数）。例如：-j 8 或 --threads 8
     #[arg(short = 'j', long = "threads", value_name = "N")]
     threads: Option<usize>,
+
+    /// 执行删除重复文件（危险操作）。若不提供，则仅报告不删除
+    #[arg(long = "delete", default_value_t = false)]
+    delete: bool,
+
+    /// 选择保留策略：按创建时间/更新时间 升序(asc)/降序(desc) 排序后保留第一个
+    #[arg(long = "keep", value_enum, default_value_t = KeepStrategy::ModifiedDesc)]
+    keep: KeepStrategy,
+
+    /// 试运行：打印将要删除的文件但不实际删除
+    #[arg(long = "dry-run", default_value_t = false)]
+    dry_run: bool,
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum OutputFormat { Txt, Csv, Json }
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum KeepStrategy {
+    /// 按创建时间升序（最早的留，删除其余）
+    CreatedAsc,
+    /// 按创建时间降序（最新的留，删除其余）
+    CreatedDesc,
+    /// 按修改时间升序（最早修改的留，删除其余）
+    ModifiedAsc,
+    /// 按修改时间降序（最新修改的留，删除其余）
+    ModifiedDesc,
+}
 
 const PARTIAL_HASH_SIZE: usize = 4096; // 4KB from head and 4KB from tail when possible
 
@@ -137,6 +161,24 @@ fn main() -> io::Result<()> {
         println!("Results written to {} in {:?} format.", out_path, args.format);
     } else {
         print_output(args.format, &duplicate_groups, &metrics)?;
+    }
+
+    // 删除重复文件（可选）
+    if args.delete {
+        println!("\n--- Deletion ---");
+        let report = delete_duplicates(&duplicate_groups, args.keep, args.dry_run)?;
+        println!(
+            "Groups processed: {} | Files deleted: {} | Bytes freed: {} | Failures: {}{}",
+            report.groups_processed,
+            report.files_deleted,
+            report.bytes_deleted,
+            report.failures.len(),
+            if args.dry_run { " (dry-run)" } else { "" }
+        );
+        // 可选择打印失败详情
+        for (p, e) in &report.failures {
+            eprintln!("Failed to delete {}: {}", p.display(), e);
+        }
     }
 
     Ok(())
@@ -256,6 +298,102 @@ fn confirm_with_full_hash(
 
     bar.finish_with_message("Full hash check complete.");
     duplicate_groups
+}
+
+struct DeletionReport {
+    groups_processed: usize,
+    files_deleted: usize,
+    bytes_deleted: u64,
+    failures: Vec<(PathBuf, String)>,
+}
+
+fn delete_duplicates(
+    groups: &Vec<Vec<PathBuf>>,
+    strategy: KeepStrategy,
+    dry_run: bool,
+) -> io::Result<DeletionReport> {
+    use std::fs;
+    let mut files_deleted = 0usize;
+    let mut bytes_deleted = 0u64;
+    let mut failures: Vec<(PathBuf, String)> = Vec::new();
+
+    for g in groups {
+        if g.len() < 2 { continue; }
+        // 选出要保留的文件
+        let kept = select_keep(g, strategy);
+        // 删除其他文件
+        for p in g {
+            if p == &kept { continue; }
+            match std::fs::metadata(p) {
+                Ok(md) => {
+                    let size = md.len();
+                    if dry_run {
+                        println!("Would delete: {} ({} bytes)", p.display(), size);
+                        files_deleted += 1;
+                        bytes_deleted += size;
+                    } else {
+                        match fs::remove_file(p) {
+                            Ok(_) => {
+                                println!("Deleted: {} ({} bytes)", p.display(), size);
+                                files_deleted += 1;
+                                bytes_deleted += size;
+                            }
+                            Err(e) => failures.push((p.clone(), e.to_string())),
+                        }
+                    }
+                }
+                Err(e) => failures.push((p.clone(), e.to_string())),
+            }
+        }
+    }
+
+    Ok(DeletionReport {
+        groups_processed: groups.len(),
+        files_deleted,
+        bytes_deleted,
+        failures,
+    })
+}
+
+fn select_keep(group: &Vec<PathBuf>, strategy: KeepStrategy) -> PathBuf {
+    // 返回匹配策略的“第一个”，即排序后第一个元素
+    let mut best: Option<(PathBuf, std::time::SystemTime)> = None;
+    let mut best_path_only: Option<PathBuf> = None; // 回退：若时间都失败，用字典序最小
+
+    for p in group {
+        // 备选：用于彻底无时间戳时的回退
+        match &best_path_only {
+            Some(cur) => {
+                if p.to_string_lossy() < cur.to_string_lossy() { best_path_only = Some(p.clone()); }
+            }
+            None => best_path_only = Some(p.clone()),
+        }
+
+        if let Some(t) = file_time_for_strategy(p, strategy) {
+            match &best {
+                Some((_bp, bt)) => {
+                    let better = match strategy {
+                        KeepStrategy::CreatedAsc | KeepStrategy::ModifiedAsc => t < *bt,
+                        KeepStrategy::CreatedDesc | KeepStrategy::ModifiedDesc => t > *bt,
+                    };
+                    if better { best = Some((p.clone(), t)); }
+                }
+                None => best = Some((p.clone(), t)),
+            }
+        }
+    }
+
+    if let Some((bp, _)) = best { bp } else { best_path_only.unwrap() }
+}
+
+fn file_time_for_strategy(path: &Path, strategy: KeepStrategy) -> Option<std::time::SystemTime> {
+    let md = std::fs::metadata(path).ok()?;
+    match strategy {
+        KeepStrategy::CreatedAsc | KeepStrategy::CreatedDesc => {
+            md.created().ok().or_else(|| md.modified().ok())
+        }
+        KeepStrategy::ModifiedAsc | KeepStrategy::ModifiedDesc => md.modified().ok(),
+    }
 }
 
 /// 计算文件前 `PARTIAL_HASH_SIZE` 字节的 BLAKE3 哈希
