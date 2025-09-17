@@ -24,6 +24,9 @@ struct Args {
     /// Output format: txt, csv, json
     #[arg(long = "format", value_enum, default_value_t = OutputFormat::Txt)]
     format: OutputFormat,
+    /// 并行线程数（默认：CPU 逻辑核心数）。例如：-j 8 或 --threads 8
+    #[arg(short = 'j', long = "threads", value_name = "N")]
+    threads: Option<usize>,
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -33,10 +36,12 @@ const PARTIAL_HASH_SIZE: usize = 4096; // 4KB from head and 4KB from tail when p
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
-    // 可选：提高 Rayon 线程栈大小，避免极端情况下的栈溢出（若已初始化则忽略错误）
-    let _ = rayon::ThreadPoolBuilder::new()
-        .stack_size(4 * 1024 * 1024)
-        .build_global();
+    // 根据命令行设置并行线程数，并增加线程栈大小（避免极端情况下的栈溢出）
+    {
+        let mut builder = rayon::ThreadPoolBuilder::new().stack_size(4 * 1024 * 1024);
+        if let Some(n) = args.threads { builder = builder.num_threads(n); }
+        let _ = builder.build_global(); // 若已初始化则忽略
+    }
     let scan_path = Path::new(&args.directory);
     let start_time = Instant::now();
 
