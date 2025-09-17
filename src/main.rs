@@ -8,7 +8,6 @@ use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use serde::Serialize;
-use sysinfo::{Disks, DiskKind};
 
 // 定义命令行参数
 #[derive(Parser, Debug)]
@@ -37,28 +36,13 @@ const PARTIAL_HASH_SIZE: usize = 4096; // 4KB from head and 4KB from tail when p
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
-    // 计算默认并行度（若未显式指定 threads）：基于磁盘类型与 CPU
-    let auto_choice = auto_parallelism(&args.directory);
-    let chosen_threads = args.threads.or_else(|| auto_choice.as_ref().map(|c| c.threads));
-    // 打印选择日志
-    match (args.threads, &auto_choice) {
-        (Some(n), _) => {
-            println!("Parallel threads: {} (from --threads)", n);
-        }
-        (None, Some(c)) => {
-            println!(
-                "Parallel threads (auto): {} (cpu={}, disk={}, rule={})",
-                c.threads, c.cpu, c.disk.unwrap_or("unknown"), c.rule
-            );
-        }
-        (None, None) => {
-            println!("Parallel threads: default (Rayon)\n");
-        }
-    }
+    // 并行度：优先使用 --threads；否则默认使用 CPU 逻辑核心数
+    let chosen_threads: usize = args.threads.unwrap_or_else(|| num_cpus::get().max(1));
+    println!("Parallel threads: {}", chosen_threads);
     // 初始化 Rayon 线程池（并统一增大栈）
     {
         let mut builder = rayon::ThreadPoolBuilder::new().stack_size(4 * 1024 * 1024);
-        if let Some(n) = chosen_threads { builder = builder.num_threads(n); }
+        builder = builder.num_threads(chosen_threads);
         let _ = builder.build_global();
     }
     let scan_path = Path::new(&args.directory);
@@ -159,54 +143,6 @@ fn main() -> io::Result<()> {
 }
 
 fn dur_secs(d: Duration) -> f64 { d.as_secs_f64() }
-
-/// 基于磁盘类型与 CPU 数自动决定并行度
-/// 规则：
-/// - 若扫描路径所在盘为 SSD/NVMe：使用逻辑核心数（上限 32，避免过高）
-/// - 若为 HDD（旋转盘）：使用逻辑核心数的一半（至少 2，至多 8）
-/// - 若无法识别磁盘类型：使用逻辑核心数但上限 16
-struct AutoParallelChoice {
-    threads: usize,
-    cpu: usize,
-    disk: Option<&'static str>,
-    rule: &'static str,
-}
-
-fn auto_parallelism(scan_dir: &str) -> Option<AutoParallelChoice> {
-    let cpu = num_cpus::get();
-    let cpu = cpu.max(1);
-
-    // 通过盘符前缀匹配 Windows 情况（例如 C:\ 或 D:\），其它平台退化为根匹配
-    let scan_path = std::path::Path::new(scan_dir);
-
-    // 从 sysinfo 获取磁盘列表并尝试定位对应盘
-    let disks = Disks::new_with_refreshed_list();
-
-    // 查找与扫描路径匹配的磁盘（最前缀匹配）
-    let mut disk_kind: Option<DiskKind> = None;
-    for d in disks.list() {
-        let mount_point = d.mount_point();
-        // 简化匹配逻辑：判断扫描路径是否以该挂载点为前缀
-        if scan_path.starts_with(mount_point) || mount_point.starts_with(scan_path) {
-            disk_kind = Some(d.kind());
-            break;
-        }
-    }
-
-    // 决策线程数
-    let (threads, disk_str, rule) = match disk_kind {
-        Some(DiskKind::HDD) => {
-            ((cpu / 2).clamp(2, 8), Some("HDD"), "cpu/2 clamped [2,8]")
-        }
-        Some(DiskKind::SSD) => {
-            (cpu.clamp(2, 32), Some("SSD"), "cpu clamped [2,32]")
-        }
-        _ => {
-            (cpu.clamp(2, 16), None, "cpu clamped [2,16] (unknown disk)")
-        }
-    };
-    Some(AutoParallelChoice { threads, cpu, disk: disk_str, rule })
-}
 
 /// Stage 1: 遍历目录，按文件大小分组
 fn group_by_size(path: &Path) -> HashMap<u64, Vec<PathBuf>> {
