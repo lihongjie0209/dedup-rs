@@ -39,6 +39,10 @@ struct Args {
     /// 试运行：打印将要删除的文件但不实际删除
     #[arg(long = "dry-run", default_value_t = false)]
     dry_run: bool,
+
+    /// 只查找同一文件夹内的重复文件（忽略跨文件夹的重复）
+    #[arg(long = "same-folder-only", default_value_t = false)]
+    same_folder_only: bool,
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -83,6 +87,13 @@ fn main() -> io::Result<()> {
         .into_iter()
         .filter(|(_, paths)| paths.len() > 1)
         .collect();
+    
+    // 如果启用 same_folder_only，则进一步过滤：只保留同一目录内有多个文件的组
+    let potential_duplicates = if args.same_folder_only {
+        filter_same_folder_groups(potential_duplicates)
+    } else {
+        potential_duplicates
+    };
     let candidate_groups = potential_duplicates.len() as u64;
     let time_stage1 = stage1_start.elapsed();
     println!(
@@ -185,6 +196,31 @@ fn main() -> io::Result<()> {
 }
 
 fn dur_secs(d: Duration) -> f64 { d.as_secs_f64() }
+
+/// 过滤掉跨文件夹的重复文件组，只保留同一文件夹内有多个文件的组
+fn filter_same_folder_groups(
+    size_groups: HashMap<u64, Vec<PathBuf>>,
+) -> HashMap<u64, Vec<PathBuf>> {
+    let mut filtered: HashMap<u64, Vec<PathBuf>> = HashMap::new();
+    
+    for (size, paths) in size_groups {
+        // 按父目录分组
+        let mut folder_groups: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+        for path in paths {
+            let parent = path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
+            folder_groups.entry(parent).or_default().push(path);
+        }
+        
+        // 只保留同一文件夹内有多个文件的组
+        for (_, folder_paths) in folder_groups {
+            if folder_paths.len() > 1 {
+                filtered.entry(size).or_default().extend(folder_paths);
+            }
+        }
+    }
+    
+    filtered
+}
 
 /// Stage 1: 遍历目录，按文件大小分组
 fn group_by_size(path: &Path) -> HashMap<u64, Vec<PathBuf>> {

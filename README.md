@@ -2,7 +2,26 @@
 
 一个用 Rust 编写的高性能重复文件扫描工具，面向大规模目录与海量文件的去重场景。
 
-核心思路：多阶段过滤流水线最大化吞吐、最小化不必要的 I/O。
+核心### 删除重复文件（可选）
+
+新增删除能```powershell
+# 仅查看将会- 跨平台差异：部分文件系统/平台可能不存在"创建时间"，此时会回退使用"修改时间"；若两者都不可用，将按路径字典序回退。
+- 安全建议：先用 `--dry-run` 查看删除清单，确认无误再移除 `--dry-run` 执行真正删除。
+- `--same-folder-only`：当你只想查找同一目录内的重复文件时使用，忽略跨文件夹的重复。这在整理下载文件夹或特定项目目录时很有用。哪些文件（不真的删）
+./target/release/dedup-rs "C:\\path\\to\\scan" --delete --dry-run --keep created-asc
+
+# 实际删除，保留每组"最新修改"的文件
+./target/release/dedup-rs "C:\\path\\to\\scan" --delete --keep modified-desc
+
+# 只查找同一文件夹内的重复文件，不跨文件夹比较
+./target/release/dedup-rs "C:\\path\\to\\scan" --same-folder-only
+`````
+--delete                执行删除；若不提供，仅扫描与报告
+--dry-run               试运行，打印将删除的文件但不实际删除
+--keep <strategy>       保留策略（其余删除），可选：created-asc | created-desc | modified-asc | modified-desc
+                        默认：modified-desc（保留"最新修改"的那一个）
+--same-folder-only      只查找同一文件夹内的重复文件（忽略跨文件夹的重复）
+```线最大化吞吐、最小化不必要的 I/O。
 
 - 阶段 1：按文件大小分组（并行遍历）
 - 阶段 2：计算“部分哈希”（文件头 4KB + 尾 4KB，BLAKE3）筛掉大多数非重复项
