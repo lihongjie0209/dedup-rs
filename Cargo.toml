@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["Your Name <you@example.com>"]
 description = "High-performance duplicate file scanner using multi-stage filtering (size -> partial hash -> full hash)"
 license = "MIT OR Apache-2.0"
-repository = ""
+repository = "https://github.com/lihongjie0209/dedup-rs"
 
 [dependencies]
 # Fast, parallel directory traversal

@@ -3,6 +3,8 @@ name: build
 on:
   push:
     branches: [ main ]
+    tags:
+      - 'v*.*.*'
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -44,7 +46,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           mkdir -p dist
-          cp target/release/dedup-rs dist/dedup-rs-macos-universal
+          cp target/release/dedup-rs dist/dedup-rs-macos-x86_64
 
       - name: Archive artifacts (Windows)
         if: runner.os == 'Windows'
